@@ -1,0 +1,7 @@
+# For data manipulation and Excel file handling
+pandas
+openpyxl
+
+# For web scraping and browser automation
+selenium
+requests
