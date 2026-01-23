@@ -52,10 +52,13 @@ class NfaProcessor:
         
         if instance > 1:
             # This list ensures the script knows which categories can appear more than once.
-            duplicate_keys = ["kombinasjonsfond", "andre rentefond", "likviditetsfond", 
+            duplicate_keys = ["kombinasjonsfond", "andre rentefond", "likviditetsfond",
                               "internasjonale obligasjonsfond", "norske fond", "norsk/internasjonalt"]
             if counter_key in duplicate_keys:
-                mapping_key = f"{counter_key}_second"
+                if instance == 2:
+                    mapping_key = f"{counter_key}_second"
+                elif instance == 3:
+                    mapping_key = f"{counter_key}_third"
 
         if mapping_key in self.fund_mappings:
             codes = self.fund_mappings[mapping_key]
