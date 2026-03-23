@@ -197,10 +197,12 @@ FUND_MAPPINGS = {
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.BONFUND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.BONFUND.M"
     },
     "internasjonale obligasjonsfond": {
+        # First occurrence in source: child of "Andre rentefond" (OTHINTFUND) - usually zero
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.INTERFUND.OTHINTFUND.INTBOND.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.INTERFUND.OTHINTFUND.INTBOND.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.OTHINTFUND.INTBOND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.OTHINTFUND.INTBOND.M"
     },
     "internasjonale obligasjonsfond_second": {
+        # Second occurrence in source: child of "Obligasjonsfond" (BONFUND) - has real values
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.INTERFUND.BONFUND.INTBOND.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.INTERFUND.BONFUND.INTBOND.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.BONFUND.INTBOND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.BONFUND.INTBOND.M"
     },

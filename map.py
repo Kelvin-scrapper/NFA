@@ -1,14 +1,14 @@
 # map.py
 
 """
-NFA PROCESSOR - VERSION 5.0 (Definitive Conditional Logic)
-- This is the complete, correct, and final version of the script.
-- It correctly implements the conditional number parsing logic as per the original requirement:
-  1. For rows named 'Total', dots are removed as thousands separators.
-  2. For all other rows, dots are treated as decimal separators.
-- It includes the corrected `duplicate_keys` list in `get_fund_codes` to properly map all
-  instances of 'norsk/internasjonalt'.
-- This version works in tandem with config.py v5.0 to produce the correct output.
+NFA PROCESSOR - VERSION 7.0 (Market-Share Context Mapping)
+- Hierarchy detection uses col8 (Markedsandel Tegning / Market Share) from source:
+    col8 == 1.0  →  leaf/child node  →  uses '_second' mapping variant
+    col8 <  1.0  →  aggregate/parent node  →  uses base mapping key
+- This eliminates brittle instance counters; mapping adapts automatically when
+  the source file adds, removes, or reorders duplicate fund name rows.
+- Correctly implements conditional number parsing for 'Total' rows.
+- Works in tandem with config.py.
 """
 
 import pandas as pd
@@ -24,12 +24,12 @@ from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS
 
 class NfaProcessor:
     def __init__(self):
-        print("🏗️  Initializing NFA Processor v5.0 (Definitive Conditional Logic)...")
+        print("Initializing NFA Processor v7.0 (Market-Share Context Mapping)...")
         self.format_codes, self.format_descriptions = [], []
         self.fund_mappings = FUND_MAPPINGS
         self.unmapped_funds = set()
         self._load_format_from_config()
-        print("✅ Processor initialized successfully.")
+        print("Processor initialized successfully.")
 
     def _load_format_from_config(self):
         try:
@@ -39,23 +39,35 @@ class NfaProcessor:
             self.format_descriptions = next(csv.reader(descriptions_file))[1:]
             print(f"   - Loaded {len(self.format_codes)} column definitions from config.")
         except Exception as e:
-            print(f"❌ CRITICAL ERROR: Could not load format from config.py: {e}")
+            print(f"CRITICAL ERROR: Could not load format from config.py: {e}")
             raise
 
-    def get_fund_codes(self, fund_name, file_type, instance_counters):
-        clean_name = " ".join(fund_name.strip().split())
-        counter_key = clean_name.lower()
-        instance_counters[counter_key] = instance_counters.get(counter_key, 0) + 1
-        instance = instance_counters[counter_key]
+    def get_fund_codes(self, fund_name, file_type, market_share=None):
+        """
+        Resolves the output codes for a fund row using the market-share context signal.
 
+        col8 (Markedsandel Tegning) in the source sheet encodes hierarchy position:
+          - col8 == 1.0  →  this row is the leaf/child within its sub-group
+                            → use the '_second' mapping variant
+          - col8 <  1.0  →  this row is the aggregate/parent of the sub-group
+                            → use the base mapping key
+
+        If market_share is unavailable (None, NaN, '-'), falls back to the base key,
+        which is correct for all single-occurrence fund names.
+        """
+        clean_name = " ".join(fund_name.strip().split())
         mapping_key = clean_name.lower()
-        
-        if instance > 1:
-            # This list ensures the script knows which categories can appear more than once.
-            duplicate_keys = ["kombinasjonsfond", "andre rentefond", "likviditetsfond", 
-                              "internasjonale obligasjonsfond", "norske fond", "norsk/internasjonalt"]
-            if counter_key in duplicate_keys:
-                mapping_key = f"{counter_key}_second"
+
+        # Attempt context-aware upgrade to '_second' variant when market share == 1.0
+        if market_share is not None:
+            try:
+                ms = float(str(market_share).replace(',', '.'))
+                if abs(ms - 1.0) < 0.001:
+                    candidate = f"{mapping_key}_second"
+                    if candidate in self.fund_mappings:
+                        mapping_key = candidate
+            except (ValueError, TypeError):
+                pass  # Non-numeric (e.g. '-'), stay with base key
 
         if mapping_key in self.fund_mappings:
             codes = self.fund_mappings[mapping_key]
@@ -63,7 +75,7 @@ class NfaProcessor:
                 return codes.get('netsub_norretcus'), codes.get('mancap_norretcus')
             elif file_type == 'PENFUNDSEL':
                 return codes.get('netsub_penfundsel'), codes.get('mancap_penfundsel')
-        
+
         return None, None
 
     def _parse_number(self, value, is_total_row=False):
@@ -84,20 +96,20 @@ class NfaProcessor:
             # Default rule for all other rows: treat comma as decimal separator.
             num_str = num_str.replace(',', '.')
 
-        return pd.to_numeric(num_str, errors='coerce')
+        return pd.to_numeric(num_str, errors='coerce', downcast=None)
 
     def process_directory(self, scan_dir=".", output_dir="output"):
-        print("\n" + "="*60 + "\n🚀 STARTING FILE PROCESSING\n" + "="*60)
+        print("\n" + "="*60 + "\nSTARTING FILE PROCESSING\n" + "="*60)
         all_records = []
         excel_files = self._scan_for_excel_files(scan_dir)
 
         for file_path in excel_files:
             file_format, sheet_name = self._sniff_file_format(file_path)
             if not file_format:
-                print(f"\n📄 Skipping file: {os.path.basename(file_path)} (Not a recognized NFA format)")
+                print(f"\nSkipping file: {os.path.basename(file_path)} (Not a recognized NFA format)")
                 continue
-            
-            print(f"\n📄 Processing file: {os.path.basename(file_path)} (Detected as {file_format})")
+
+            print(f"\nProcessing file: {os.path.basename(file_path)} (Detected as {file_format})")
             records = []
             if file_format == "Tabell 2":
                 records = self._process_detailed_file(file_path, sheet_name)
@@ -108,13 +120,13 @@ class NfaProcessor:
                 all_records.extend(records)
         
         if not all_records:
-            print("\n❌ No data could be extracted from any files.")
+            print("\nNo data could be extracted from any files.")
             return
 
         self._generate_final_report(all_records, output_dir)
         
     def _scan_for_excel_files(self, scan_directory):
-        print(f"🔍 Scanning for Excel files in: {os.path.abspath(scan_directory)}")
+        print(f"Scanning for Excel files in: {os.path.abspath(scan_directory)}")
         excel_files = glob.glob(os.path.join(scan_directory, "**", "*.xls*"), recursive=True)
         return [f for f in excel_files if not os.path.basename(f).startswith(('~$', '.'))]
 
@@ -132,23 +144,29 @@ class NfaProcessor:
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine='openpyxl')
             _, time_period, customer_type = self._get_file_metadata(filename=os.path.basename(file_path))
             
-            records, instance_counters = [], {}
+            records = []
             start_row = 0
             for i, row in df.iterrows():
                 if 'navn' in str(row.iloc[0]).lower():
                     start_row = i + 1; break
-            
+
             for i in range(start_row, len(df)):
                 if pd.isna(df.iloc[i, 0]) or len(str(df.iloc[i, 0]).strip()) == 0 or len(df.columns) <= 5: continue
-                
+
                 fund_name = str(df.iloc[i, 0])
-                # Determine if the special "Total" row parsing logic applies
                 is_total = fund_name.strip().lower() == 'total'
 
                 netsub_val = self._parse_number(df.iloc[i, 4], is_total_row=is_total)
                 mancap_val = self._parse_number(df.iloc[i, 5], is_total_row=is_total)
-                
-                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, instance_counters)
+
+                # col8 = Markedsandel Tegning (market share): 1.0 = leaf/child node
+                market_share = df.iloc[i, 8] if len(df.columns) > 8 else None
+
+                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, market_share)
+
+                # Skip rows with ZERO values
+                if abs(netsub_val) < 0.01 and abs(mancap_val) < 0.01:
+                    continue
                 if netsub_code and mancap_code:
                     records.extend([
                         {'code': netsub_code, 'value': netsub_val, 'period': time_period},
@@ -160,7 +178,7 @@ class NfaProcessor:
             print(f"   - Extracted {len(records)} detailed data points.")
             return records
         except Exception as e:
-            print(f"   - ❌ ERROR during detailed file processing: {e}")
+            print(f"   - ERROR during detailed file processing: {e}")
             return []
 
     def _process_summary_file(self, file_path, sheet_name):
@@ -175,7 +193,7 @@ class NfaProcessor:
             netsub_val = self._parse_number(total_row.iloc[0, 4], is_total_row=True)
             mancap_val = self._parse_number(total_row.iloc[0, 5], is_total_row=True)
 
-            netsub_code, mancap_code = self.get_fund_codes('Total', customer_type, {})
+            netsub_code, mancap_code = self.get_fund_codes('Total', customer_type)
             if netsub_code and mancap_code:
                 print(f"   - Extracted 2 summary 'Total' data points.")
                 return [
@@ -184,7 +202,7 @@ class NfaProcessor:
                 ]
             return []
         except Exception as e:
-            print(f"   - ❌ ERROR during summary file processing: {e}")
+            print(f"   - ERROR during summary file processing: {e}")
             return []
             
     def _get_file_metadata(self, filename):
@@ -201,22 +219,22 @@ class NfaProcessor:
         return filename, time_period, customer_type
 
     def _generate_final_report(self, all_records, output_dir):
-        print("\n" + "="*60 + "\n📊 PROCESSING SUMMARY\n" + "="*60)
+        print("\n" + "="*60 + "\nPROCESSING SUMMARY\n" + "="*60)
         print(f"   - Total data points extracted: {len(all_records)}")
         
         unmapped_list = sorted([f for f in self.unmapped_funds if f.lower() not in ['total', 'navn']])
         if unmapped_list:
-            print("   - ⚠️  The following fund types were found but NOT MAPPED:")
+            print("   - WARNING: The following fund types were found but NOT MAPPED:")
             for fund in unmapped_list: print(f"     - '{fund}'")
             print("   - ACTION: Add these to the FUND_MAPPINGS dictionary in config.py.")
         else:
-            print("   - ✅ All found fund types were successfully mapped.")
+            print("   - All found fund types were successfully mapped.")
 
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        df_data = pd.DataFrame(all_records).pivot_table(index='period', columns='code', values='value', aggfunc='sum').fillna(0)
-        df_data = df_data.reindex(columns=self.format_codes)
+        df_data = pd.DataFrame(all_records).pivot_table(index='period', columns='code', values='value', aggfunc='sum', fill_value=0)
+        df_data = df_data.reindex(columns=self.format_codes, fill_value=0)
         
         data_path = os.path.join(output_dir, f"NFA_DATA_{timestamp}.xlsx")
         meta_path = os.path.join(output_dir, f"NFA_META_{timestamp}.xlsx")
@@ -226,21 +244,21 @@ class NfaProcessor:
             header_df = pd.DataFrame([self.format_codes, self.format_descriptions])
             header_df.to_excel(writer, sheet_name='Data', index=False, header=False, startrow=0, startcol=1)
             df_data.to_excel(writer, sheet_name='Data', index=True, header=False, startrow=2)
-        print(f"\n✅ Data file created: {os.path.basename(data_path)}")
+        print(f"\nData file created: {os.path.basename(data_path)}")
 
         df_meta = pd.DataFrame({'CODE': self.format_codes, 'DESCRIPTION': self.format_descriptions, 'UNIT': 'I tusen NOK', 'FREQUENCY': 'M', 'SOURCE': 'NFAMA', 'DATASET': 'NFA', 'NEXT_RELEASE_DATE': (datetime.now() + pd.DateOffset(months=1)).strftime('%Y-%m-01T12:00:00')})
         df_meta.to_excel(meta_path, sheet_name='Metadata', index=False)
-        print(f"✅ Metadata file created: {os.path.basename(meta_path)}")
+        print(f"Metadata file created: {os.path.basename(meta_path)}")
 
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(data_path, os.path.basename(data_path)); zf.write(meta_path, os.path.basename(meta_path))
-        print(f"✅ ZIP archive created: {os.path.basename(zip_path)}")
-        
-        print("\n" + "="*60 + "\n🎉 PROCESSING COMPLETED\n" + "="*60)
-        print(f"📦 Final ZIP archive is ready at: {zip_path}")
+        print(f"ZIP archive created: {os.path.basename(zip_path)}")
+
+        print("\n" + "="*60 + "\nPROCESSING COMPLETED\n" + "="*60)
+        print(f"Final ZIP archive is ready at: {zip_path}")
 
 if __name__ == "__main__":
     try:
         NfaProcessor().process_directory()
     except Exception as e:
-        print(f"\n❌ A critical error stopped the script: {e}")
+        print(f"\nA critical error stopped the script: {e}")
