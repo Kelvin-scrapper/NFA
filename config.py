@@ -173,6 +173,10 @@ FUND_MAPPINGS = {
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.OTHINTFUND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.OTHINTFUND.M"
     },
     "andre rentefond_second": {
+        "netsub_norretcus": "NFA.NORRETCUS.NETSUB.INTERFUND.OTHINTFUND.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.INTERFUND.OTHINTFUND.M",
+        "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.OTHINTFUND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.OTHINTFUND.M"
+    },
+    "andre rentefond_third": {
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.INTERFUND.OTHINTFUND.OTHINT.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.INTERFUND.OTHINTFUND.OTHINT.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.OTHINTFUND.OTHINT.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.OTHINTFUND.OTHINT.M"
     },

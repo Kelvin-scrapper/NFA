@@ -57,17 +57,13 @@ class NfaProcessor:
         """
         clean_name = " ".join(fund_name.strip().split())
         mapping_key = clean_name.lower()
-
-        # Attempt context-aware upgrade to '_second' variant when market share == 1.0
-        if market_share is not None:
-            try:
-                ms = float(str(market_share).replace(',', '.'))
-                if abs(ms - 1.0) < 0.001:
-                    candidate = f"{mapping_key}_second"
-                    if candidate in self.fund_mappings:
-                        mapping_key = candidate
-            except (ValueError, TypeError):
-                pass  # Non-numeric (e.g. '-'), stay with base key
+        
+        if instance > 1:
+            # This list ensures the script knows which categories can appear more than once.
+            duplicate_keys = ["kombinasjonsfond", "andre rentefond", "likviditetsfond", 
+                              "internasjonale obligasjonsfond", "norske fond", "norsk/internasjonalt"]
+            if counter_key in duplicate_keys:
+                mapping_key = f"{counter_key}_second"
 
         if mapping_key in self.fund_mappings:
             codes = self.fund_mappings[mapping_key]
