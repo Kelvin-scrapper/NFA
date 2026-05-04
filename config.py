@@ -20,32 +20,7 @@ DESCRIPTIONS_CSV_STRING = """
 
 
 # =============================================================================
-# 2. SECTION CONTEXT — controls duplicate fund name resolution
-# =============================================================================
-
-# Fund names that mark a new section when encountered. The processor updates
-# current_section to this name so subsequent rows know which parent they belong to.
-SECTION_HEADERS = {
-    "aksjefond", "bransjefond", "internasjonale aksjefond",
-    "kombinasjonsfond", "rentefond", "andre rentefond",
-    "likviditetsfond", "obligasjonsfond",
-    "norsk/internasjonalt", "norske fond",
-}
-
-# Maps (current_section, fund_name) → config key to use.
-# Only entries for fund names that appear more than once with the same name.
-# Lookup uses current_section at the time the row is encountered (before the
-# section is updated for that row), so context reflects the PARENT section.
-SECTION_CONTEXT_KEYS = {
-    ("kombinasjonsfond",       "kombinasjonsfond"):                "kombinasjonsfond_second",
-    ("norsk/internasjonalt",   "norsk/internasjonalt"):            "norsk/internasjonalt_second",
-    ("norske fond",            "norske fond"):                     "norske fond_second",
-    ("likviditetsfond",        "likviditetsfond"):                 "likviditetsfond_second",
-    ("obligasjonsfond",        "internasjonale obligasjonsfond"):  "internasjonale obligasjonsfond_second",
-}
-
-# =============================================================================
-# 3. FUND MAPPINGS
+# 2. FUND MAPPINGS
 # =============================================================================
 FUND_MAPPINGS = {
     # All keys are lowercase for case-insensitive matching in the script

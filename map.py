@@ -1,15 +1,17 @@
 # map.py
 
 """
-NFA PROCESSOR - VERSION 9.0 (Section-Context Mapping)
-- Resolves duplicate fund names using parent-section context tracked as rows are
-  scanned. SECTION_HEADERS in config.py defines which fund names mark a new section;
-  SECTION_CONTEXT_KEYS maps (section, fund_name) to the correct config key.
-- Order-independent: moving rows within a section does not break the mapping.
-- "andre rentefond" market_share=1.0 self-total rows are skipped — they are exact
-  duplicates of the cross-aggregate row and would cause double-counting.
+NFA PROCESSOR - VERSION 10.0 (Adaptive Section-Context Mapping)
+- Section headers are auto-derived from FUND_MAPPINGS: any fund that has a
+  '_second' entry is treated as a potential section boundary.
+- Duplicate fund names are detected by tracking which section each fund was
+  first seen in. When the same name reappears under a different section it is
+  automatically promoted to its '_second' (or '_third') mapping key.
+- If the '_second' key maps to the same output codes as the base key the row is
+  silently skipped (self-total duplicate). No manual SECTION_CONTEXT_KEYS needed.
+- Adding a new duplicate fund requires only one config change: a '_second' entry
+  in FUND_MAPPINGS. No other config updates needed.
 - Correctly implements conditional number parsing for 'Total' rows.
-- Works in tandem with config.py.
 """
 
 import pandas as pd
@@ -21,11 +23,11 @@ import re
 import csv
 import io
 
-from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS, SECTION_HEADERS, SECTION_CONTEXT_KEYS
+from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS
 
 class NfaProcessor:
     def __init__(self):
-        print("Initializing NFA Processor v9.0 (Section-Context Mapping)...")
+        print("Initializing NFA Processor v10.0 (Adaptive Section-Context Mapping)...")
         self.format_codes, self.format_descriptions = [], []
         self.fund_mappings = FUND_MAPPINGS
         self.unmapped_funds = set()
@@ -43,26 +45,15 @@ class NfaProcessor:
             print(f"CRITICAL ERROR: Could not load format from config.py: {e}")
             raise
 
-    def get_fund_codes(self, fund_name, file_type, current_section=None):
-        """
-        Resolves output codes using parent-section context.
-
-        SECTION_CONTEXT_KEYS maps (current_section, fund_name) → config key for
-        fund names that appear more than once. current_section is the most recent
-        section header seen BEFORE this row, so context is the parent — not the row
-        itself. This makes mapping order-independent: moving rows within a section
-        does not break the lookup.
-        """
-        fund_key = " ".join(fund_name.strip().split()).lower()
-        mapping_key = SECTION_CONTEXT_KEYS.get((current_section, fund_key), fund_key)
-
-        if mapping_key in self.fund_mappings:
-            codes = self.fund_mappings[mapping_key]
+    def get_fund_codes(self, fund_name, file_type, mapping_key=None):
+        """Looks up output codes for fund_name (or an explicit mapping_key override)."""
+        key = mapping_key if mapping_key else " ".join(fund_name.strip().split()).lower()
+        if key in self.fund_mappings:
+            codes = self.fund_mappings[key]
             if file_type == 'NORRETCUS':
                 return codes.get('netsub_norretcus'), codes.get('mancap_norretcus')
             elif file_type == 'PENFUNDSEL':
                 return codes.get('netsub_penfundsel'), codes.get('mancap_penfundsel')
-
         return None, None
 
     def _parse_number(self, value, is_total_row=False):
@@ -144,38 +135,72 @@ class NfaProcessor:
             _, time_period, customer_type = self._get_file_metadata(filename=os.path.basename(file_path))
             
             records = []
+            # Funds with a '_second' entry act as section boundaries.
+            # Auto-derived — no manual list needed.
+            section_headers = {k for k in self.fund_mappings if f"{k}_second" in self.fund_mappings}
+
             current_section = None
+            fund_section_count = {}  # fund_key -> distinct sections seen so far
+            fund_last_section = {}   # fund_key -> section active when last counted
+
             start_row = 0
             for i, row in df.iterrows():
                 if 'navn' in str(row.iloc[0]).lower():
                     start_row = i + 1; break
 
             for i in range(start_row, len(df)):
-                if pd.isna(df.iloc[i, 0]) or len(str(df.iloc[i, 0]).strip()) == 0 or len(df.columns) <= 5: continue
+                if pd.isna(df.iloc[i, 0]) or len(str(df.iloc[i, 0]).strip()) == 0 or len(df.columns) <= 5:
+                    continue
 
                 fund_name = str(df.iloc[i, 0])
                 fund_key = " ".join(fund_name.strip().split()).lower()
                 is_total = fund_key == 'total'
 
-                # Skip "andre rentefond" self-total (market_share == 1.0).
-                # This row has the identical value to the cross-aggregate row above it
-                # and maps to the same output code — processing it causes double-counting.
-                try:
-                    ms = float(df.iloc[i, 8]) if len(df.columns) > 8 else None
-                    if ms is not None and abs(ms - 1.0) < 0.001 and fund_key == "andre rentefond":
-                        continue
-                except (TypeError, ValueError):
-                    pass
-
                 netsub_val = self._parse_number(df.iloc[i, 4], is_total_row=is_total)
                 mancap_val = self._parse_number(df.iloc[i, 5], is_total_row=is_total)
 
-                # Resolve codes using current_section BEFORE updating it for this row.
-                # This ensures the section reflects the parent context, not the row itself.
-                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, current_section)
+                # --- Resolve mapping key via section-change detection ---
+                if fund_key not in fund_section_count:
+                    # First time we see this fund name.
+                    fund_section_count[fund_key] = 1
+                    fund_last_section[fund_key] = current_section
+                    mapping_key = fund_key
 
-                # Update section AFTER code lookup so subsequent rows see this as parent.
-                if fund_key in SECTION_HEADERS:
+                elif current_section != fund_last_section[fund_key]:
+                    # Same fund name, different section → genuine new occurrence.
+                    fund_section_count[fund_key] += 1
+                    fund_last_section[fund_key] = current_section
+                    count = fund_section_count[fund_key]
+                    suffix = {2: '_second', 3: '_third'}.get(count, '')
+                    candidate = f"{fund_key}{suffix}" if suffix else fund_key
+
+                    if candidate in self.fund_mappings:
+                        # Skip if _second maps to identical codes (self-total duplicate).
+                        if self.get_fund_codes(fund_name, customer_type) == \
+                           self.get_fund_codes(fund_name, customer_type, candidate):
+                            if fund_key in section_headers:
+                                current_section = fund_key
+                            continue
+                        mapping_key = candidate
+                    else:
+                        # No mapping for this occurrence — skip to avoid double-counting.
+                        print(f"   - WARNING: '{fund_name.strip()}' appears in a new section "
+                              f"but no '{candidate}' mapping exists in config. Skipping.")
+                        if fund_key in section_headers:
+                            current_section = fund_key
+                        continue
+
+                else:
+                    # Same fund, same section — self-total row, skip.
+                    if fund_key in section_headers:
+                        current_section = fund_key
+                    continue
+
+                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, mapping_key)
+
+                # Update section AFTER code lookup so this row is the parent for
+                # subsequent rows, not for itself.
+                if fund_key in section_headers:
                     current_section = fund_key
 
                 if abs(netsub_val) < 0.01 and abs(mancap_val) < 0.01:
@@ -207,7 +232,7 @@ class NfaProcessor:
             netsub_val = self._parse_number(total_row.iloc[0, 4], is_total_row=True)
             mancap_val = self._parse_number(total_row.iloc[0, 5], is_total_row=True)
 
-            netsub_code, mancap_code = self.get_fund_codes('Total', customer_type)
+            netsub_code, mancap_code = self.get_fund_codes('total', customer_type)
             if netsub_code and mancap_code:
                 print(f"   - Extracted 2 summary 'Total' data points.")
                 return [
