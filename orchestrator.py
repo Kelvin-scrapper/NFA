@@ -39,7 +39,7 @@ def run_pipeline():
     3. Processes the downloaded files using the NfaProcessor.
     """
     print("="*60)
-    print("🚀 STARTING NFA DATA PIPELINE")
+    print("STARTING NFA DATA PIPELINE")
     print("="*60)
 
     # --- Cleanup Step (Optional but Recommended) ---
@@ -53,10 +53,10 @@ def run_pipeline():
     download_success = downloader.run()
 
     if not download_success:
-        print("\n❌ PIPELINE HALTED: File download failed. Please check the logs.")
-        return # Stop the pipeline if downloads fail
+        print("\nPIPELINE HALTED: File download failed. Please check the logs.")
+        return
 
-    print("\n✅ Download step completed successfully.")
+    print("\nDownload step completed successfully.")
 
     # --- Step 2: Process Files ---
     print("\n--- [STEP 2/2] INITIATING DATA PROCESSING ---")
@@ -65,12 +65,12 @@ def run_pipeline():
         # The processor will scan the DOWNLOAD_DIRECTORY and save results to OUTPUT_DIRECTORY
         processor.process_directory(scan_dir=DOWNLOAD_DIRECTORY, output_dir=OUTPUT_DIRECTORY)
     except Exception as e:
-        print(f"\n❌ PIPELINE HALTED: An error occurred during data processing: {e}")
+        print(f"\nPIPELINE HALTED: An error occurred during data processing: {e}")
         return
 
     print("\n" + "="*60)
-    print("🎉 NFA DATA PIPELINE COMPLETED SUCCESSFULLY!")
-    print(f"📦 Final report is available in the '{OUTPUT_DIRECTORY}' directory.")
+    print("NFA DATA PIPELINE COMPLETED SUCCESSFULLY!")
+    print(f"Final report is available in the '{OUTPUT_DIRECTORY}' directory.")
     print("="*60)
 
 if __name__ == "__main__":

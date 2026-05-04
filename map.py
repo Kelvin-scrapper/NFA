@@ -1,12 +1,13 @@
 # map.py
 
 """
-NFA PROCESSOR - VERSION 7.0 (Market-Share Context Mapping)
-- Hierarchy detection uses col8 (Markedsandel Tegning / Market Share) from source:
-    col8 == 1.0  →  leaf/child node  →  uses '_second' mapping variant
-    col8 <  1.0  →  aggregate/parent node  →  uses base mapping key
-- This eliminates brittle instance counters; mapping adapts automatically when
-  the source file adds, removes, or reorders duplicate fund name rows.
+NFA PROCESSOR - VERSION 9.0 (Section-Context Mapping)
+- Resolves duplicate fund names using parent-section context tracked as rows are
+  scanned. SECTION_HEADERS in config.py defines which fund names mark a new section;
+  SECTION_CONTEXT_KEYS maps (section, fund_name) to the correct config key.
+- Order-independent: moving rows within a section does not break the mapping.
+- "andre rentefond" market_share=1.0 self-total rows are skipped — they are exact
+  duplicates of the cross-aggregate row and would cause double-counting.
 - Correctly implements conditional number parsing for 'Total' rows.
 - Works in tandem with config.py.
 """
@@ -20,11 +21,11 @@ import re
 import csv
 import io
 
-from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS
+from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS, SECTION_HEADERS, SECTION_CONTEXT_KEYS
 
 class NfaProcessor:
     def __init__(self):
-        print("Initializing NFA Processor v7.0 (Market-Share Context Mapping)...")
+        print("Initializing NFA Processor v9.0 (Section-Context Mapping)...")
         self.format_codes, self.format_descriptions = [], []
         self.fund_mappings = FUND_MAPPINGS
         self.unmapped_funds = set()
@@ -42,28 +43,18 @@ class NfaProcessor:
             print(f"CRITICAL ERROR: Could not load format from config.py: {e}")
             raise
 
-    def get_fund_codes(self, fund_name, file_type, market_share=None):
+    def get_fund_codes(self, fund_name, file_type, current_section=None):
         """
-        Resolves the output codes for a fund row using the market-share context signal.
+        Resolves output codes using parent-section context.
 
-        col8 (Markedsandel Tegning) in the source sheet encodes hierarchy position:
-          - col8 == 1.0  →  this row is the leaf/child within its sub-group
-                            → use the '_second' mapping variant
-          - col8 <  1.0  →  this row is the aggregate/parent of the sub-group
-                            → use the base mapping key
-
-        If market_share is unavailable (None, NaN, '-'), falls back to the base key,
-        which is correct for all single-occurrence fund names.
+        SECTION_CONTEXT_KEYS maps (current_section, fund_name) → config key for
+        fund names that appear more than once. current_section is the most recent
+        section header seen BEFORE this row, so context is the parent — not the row
+        itself. This makes mapping order-independent: moving rows within a section
+        does not break the lookup.
         """
-        clean_name = " ".join(fund_name.strip().split())
-        mapping_key = clean_name.lower()
-        
-        if instance > 1:
-            # This list ensures the script knows which categories can appear more than once.
-            duplicate_keys = ["kombinasjonsfond", "andre rentefond", "likviditetsfond", 
-                              "internasjonale obligasjonsfond", "norske fond", "norsk/internasjonalt"]
-            if counter_key in duplicate_keys:
-                mapping_key = f"{counter_key}_second"
+        fund_key = " ".join(fund_name.strip().split()).lower()
+        mapping_key = SECTION_CONTEXT_KEYS.get((current_section, fund_key), fund_key)
 
         if mapping_key in self.fund_mappings:
             codes = self.fund_mappings[mapping_key]
@@ -122,9 +113,21 @@ class NfaProcessor:
         self._generate_final_report(all_records, output_dir)
         
     def _scan_for_excel_files(self, scan_directory):
+        import hashlib
         print(f"Scanning for Excel files in: {os.path.abspath(scan_directory)}")
         excel_files = glob.glob(os.path.join(scan_directory, "**", "*.xls*"), recursive=True)
-        return [f for f in excel_files if not os.path.basename(f).startswith(('~$', '.'))]
+        candidates = [f for f in excel_files if not os.path.basename(f).startswith(('~$', '.'))]
+
+        seen_hashes = {}
+        unique = []
+        for f in candidates:
+            md5 = hashlib.md5(open(f, 'rb').read()).hexdigest()
+            if md5 in seen_hashes:
+                print(f"   - SKIPPING duplicate file: {os.path.basename(f)} (same content as {os.path.basename(seen_hashes[md5])})")
+            else:
+                seen_hashes[md5] = f
+                unique.append(f)
+        return unique
 
     def _sniff_file_format(self, file_path):
         try:
@@ -141,6 +144,7 @@ class NfaProcessor:
             _, time_period, customer_type = self._get_file_metadata(filename=os.path.basename(file_path))
             
             records = []
+            current_section = None
             start_row = 0
             for i, row in df.iterrows():
                 if 'navn' in str(row.iloc[0]).lower():
@@ -150,19 +154,33 @@ class NfaProcessor:
                 if pd.isna(df.iloc[i, 0]) or len(str(df.iloc[i, 0]).strip()) == 0 or len(df.columns) <= 5: continue
 
                 fund_name = str(df.iloc[i, 0])
-                is_total = fund_name.strip().lower() == 'total'
+                fund_key = " ".join(fund_name.strip().split()).lower()
+                is_total = fund_key == 'total'
+
+                # Skip "andre rentefond" self-total (market_share == 1.0).
+                # This row has the identical value to the cross-aggregate row above it
+                # and maps to the same output code — processing it causes double-counting.
+                try:
+                    ms = float(df.iloc[i, 8]) if len(df.columns) > 8 else None
+                    if ms is not None and abs(ms - 1.0) < 0.001 and fund_key == "andre rentefond":
+                        continue
+                except (TypeError, ValueError):
+                    pass
 
                 netsub_val = self._parse_number(df.iloc[i, 4], is_total_row=is_total)
                 mancap_val = self._parse_number(df.iloc[i, 5], is_total_row=is_total)
 
-                # col8 = Markedsandel Tegning (market share): 1.0 = leaf/child node
-                market_share = df.iloc[i, 8] if len(df.columns) > 8 else None
+                # Resolve codes using current_section BEFORE updating it for this row.
+                # This ensures the section reflects the parent context, not the row itself.
+                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, current_section)
 
-                netsub_code, mancap_code = self.get_fund_codes(fund_name, customer_type, market_share)
+                # Update section AFTER code lookup so subsequent rows see this as parent.
+                if fund_key in SECTION_HEADERS:
+                    current_section = fund_key
 
-                # Skip rows with ZERO values
                 if abs(netsub_val) < 0.01 and abs(mancap_val) < 0.01:
                     continue
+
                 if netsub_code and mancap_code:
                     records.extend([
                         {'code': netsub_code, 'value': netsub_val, 'period': time_period},

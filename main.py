@@ -219,10 +219,10 @@ class NFAMADownloader:
             
             if self.download_file_by_text(file_text):
                 successful_downloads.append(file_text)
-                print(f"✓ Successfully initiated download for: {file_text}")
+                print(f"OK: Successfully initiated download for: {file_text}")
             else:
                 failed_downloads.append(file_text)
-                print(f"✗ Failed to download: {file_text}")
+                print(f"FAILED: Failed to download: {file_text}")
         
         return successful_downloads, failed_downloads
     
@@ -314,9 +314,9 @@ def main():
     success = downloader.run()
     
     if success:
-        print("\n✓ All downloads completed successfully!")
+        print("\nAll downloads completed successfully!")
     else:
-        print("\n✗ Some downloads failed. Check the logs above.")
+        print("\nSome downloads failed. Check the logs above.")
 
 if __name__ == "__main__":
     main()
