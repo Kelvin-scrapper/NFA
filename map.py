@@ -23,7 +23,7 @@ import re
 import csv
 import io
 
-from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS
+from config import CODES_CSV_STRING, DESCRIPTIONS_CSV_STRING, FUND_MAPPINGS, DUPLICATE_FUND_SECTION_OVERRIDES, NOT_SECTION_BOUNDARIES
 
 class NfaProcessor:
     def __init__(self):
@@ -136,12 +136,15 @@ class NfaProcessor:
             
             records = []
             # Funds with a '_second' entry act as section boundaries.
-            # Auto-derived — no manual list needed.
-            section_headers = {k for k in self.fund_mappings if f"{k}_second" in self.fund_mappings}
+            # Auto-derived — no manual list needed, except the explicit
+            # NOT_SECTION_BOUNDARIES exclusions for leaf-data duplicates.
+            section_headers = {k for k in self.fund_mappings if f"{k}_second" in self.fund_mappings} - NOT_SECTION_BOUNDARIES
 
             current_section = None
             fund_section_count = {}  # fund_key -> distinct sections seen so far
             fund_last_section = {}   # fund_key -> section active when last counted
+            previous_fund_key = None  # fund_key of the immediately preceding row (its literal parent in the sheet)
+            fund_last_values = {}    # fund_key -> (netsub_val, mancap_val) of its most recent occurrence
 
             start_row = 0
             for i, row in df.iterrows():
@@ -155,16 +158,28 @@ class NfaProcessor:
                 fund_name = str(df.iloc[i, 0])
                 fund_key = " ".join(fund_name.strip().split()).lower()
                 is_total = fund_key == 'total'
+                # Parent row for this row, used below; overwritten with fund_key
+                # just before every exit from this iteration (see `parent_key`).
+                parent_key = previous_fund_key
+                previous_fund_key = fund_key
 
                 netsub_val = self._parse_number(df.iloc[i, 4], is_total_row=is_total)
                 mancap_val = self._parse_number(df.iloc[i, 5], is_total_row=is_total)
+                prior_values = fund_last_values.get(fund_key)
+                fund_last_values[fund_key] = (netsub_val, mancap_val)
 
                 # --- Resolve mapping key via section-change detection ---
                 if fund_key not in fund_section_count:
                     # First time we see this fund name.
                     fund_section_count[fund_key] = 1
                     fund_last_section[fund_key] = current_section
-                    mapping_key = fund_key
+                    # Some fund names are ambiguous: they legitimately belong
+                    # under more than one parent row, and which one a given
+                    # month's source actually includes can vary. Pin the
+                    # mapping key by the row's literal preceding parent rather
+                    # than assuming the base key's parent is always seen first.
+                    section_overrides = DUPLICATE_FUND_SECTION_OVERRIDES.get(fund_key, {})
+                    mapping_key = section_overrides.get(parent_key, fund_key)
 
                 elif current_section != fund_last_section[fund_key]:
                     # Same fund name, different section → genuine new occurrence.
@@ -175,9 +190,18 @@ class NfaProcessor:
                     candidate = f"{fund_key}{suffix}" if suffix else fund_key
 
                     if candidate in self.fund_mappings:
-                        # Skip if _second maps to identical codes (self-total duplicate).
-                        if self.get_fund_codes(fund_name, customer_type) == \
-                           self.get_fund_codes(fund_name, customer_type, candidate):
+                        # Skip only if _second maps to identical codes AND the
+                        # value repeats the prior occurrence (a true self-total
+                        # duplicate row). Same code but a different value means
+                        # this is genuine additional data for that code (e.g. a
+                        # fund name that legitimately appears under two parents)
+                        # — record it and let the pivot's sum combine them.
+                        same_codes = self.get_fund_codes(fund_name, customer_type) == \
+                            self.get_fund_codes(fund_name, customer_type, candidate)
+                        same_values = prior_values is not None and \
+                            abs(netsub_val - prior_values[0]) < 0.01 and \
+                            abs(mancap_val - prior_values[1]) < 0.01
+                        if same_codes and same_values:
                             if fund_key in section_headers:
                                 current_section = fund_key
                             continue

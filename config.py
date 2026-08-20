@@ -164,6 +164,16 @@ FUND_MAPPINGS = {
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.COMBFUND.COMBFUND.NORWCOMB.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.COMBFUND.COMBFUND.NORWCOMB.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.COMBFUND.COMBFUND.NORWCOMB.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.COMBFUND.COMBFUND.NORWCOMB.M"
     },
+    "norske kombinasjonsfond_second": {
+        # "Norske kombinasjonsfond" appears twice in source: once as a stray
+        # zero row inside the international equity regional list (no real
+        # data), and once as the genuine child of "Kombinasjonsfond" (real
+        # values). Both route to the same NORWCOMB code so map.py's
+        # same-code/different-value check records the real occurrence
+        # instead of silently dropping it.
+        "netsub_norretcus": "NFA.NORRETCUS.NETSUB.COMBFUND.COMBFUND.NORWCOMB.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.COMBFUND.COMBFUND.NORWCOMB.M",
+        "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.COMBFUND.COMBFUND.NORWCOMB.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.COMBFUND.COMBFUND.NORWCOMB.M"
+    },
     "rentefond": {
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.INTERFUND.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.INTERFUND.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.INTERFUND.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.INTERFUND.M"
@@ -270,4 +280,37 @@ FUND_MAPPINGS = {
         "netsub_norretcus": "NFA.NORRETCUS.NETSUB.TOTAL.M", "mancap_norretcus": "NFA.NORRETCUS.MANCAP.TOTAL.M",
         "netsub_penfundsel": "NFA.PENFUNDSEL.NETSUB.TOTAL.M", "mancap_penfundsel": "NFA.PENFUNDSEL.MANCAP.TOTAL.M"
     }
+}
+
+# =============================================================================
+# 3. SECTION OVERRIDES FOR AMBIGUOUS DUPLICATE FUND NAMES
+# =============================================================================
+# Some fund names legitimately appear under two different parent sections in
+# the source (e.g. "Internasjonale obligasjonsfond" is normally a child of
+# BOTH "Andre rentefond" -> base key, "usually zero" -- and "Obligasjonsfond"
+# -> "_second" key, "has real values"). The default first-occurrence logic in
+# map.py assumes the base-key section is always seen first in the file; if a
+# given month's source is missing that section's row (only ONE occurrence
+# present), the lone row would otherwise get silently mapped to the wrong
+# (base) key. This table pins the correct mapping key by the fund's ACTUAL
+# parent section, so the very first occurrence resolves correctly regardless
+# of which sections are present that month.
+DUPLICATE_FUND_SECTION_OVERRIDES = {
+    "internasjonale obligasjonsfond": {
+        "andre rentefond": "internasjonale obligasjonsfond",
+        "obligasjonsfond": "internasjonale obligasjonsfond_second",
+    },
+}
+
+# =============================================================================
+# 4. DUPLICATE KEYS THAT ARE NOT REAL SECTION BOUNDARIES
+# =============================================================================
+# map.py auto-derives "section headers" as any key with a "_second" entry,
+# since that normally means the fund is a category with its own children.
+# Some funds get a "_second" entry purely so a stray repeated occurrence (same
+# code, different value) is recorded instead of dropped -- they are leaf data
+# points, not categories, and must NOT flip map.py's current_section (doing so
+# would shift section-tracking for unrelated funds listed after them).
+NOT_SECTION_BOUNDARIES = {
+    "norske kombinasjonsfond",
 }
